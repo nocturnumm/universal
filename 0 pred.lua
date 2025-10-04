@@ -1,8 +1,4 @@
--- Spinbot + Triggerbot + Optimized Bhop + ESP/Aimbot
--- Drop this LocalScript into StarterPlayer -> StarterPlayerScripts
--- Toggle Spinbot with BackSlash '\' (configurable)
--- WARNING: Using spin/trigger features in online games can violate Terms of Service.
-
+-- Made by nocturnumm on discord All Rights Reserved
 -- Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
