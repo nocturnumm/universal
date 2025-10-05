@@ -6,6 +6,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local VirtualUser = game:GetService("VirtualUser")
 local ContextActionService = game:GetService("ContextActionService")
+local StarterGui = game:GetService("StarterGui")
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -19,6 +20,13 @@ if not Camera then
     return
 end
 
+-- Key System Configuration
+local KEY_SYSTEM = {
+    VALID_KEY = "BetaAccess", -- Replace with your desired key
+    GUI_ENABLED = true,
+    VALIDATED = false,
+}
+
 -- CONFIG
 local CONFIG = {
     FOV_RADIUS = 500,
@@ -26,6 +34,7 @@ local CONFIG = {
     KEY_ESP = Enum.KeyCode.E,
     KEY_AIMBOT = Enum.KeyCode.Y,
     KEY_FOV = Enum.KeyCode.V,
+    KEY_THIRDPERSON = Enum.KeyCode.T,
     KEY_SPINBOT = Enum.KeyCode.BackSlash, -- '\'
 
     SPINBOT_SPIN_SPEED = 1600,            -- degrees per second (yaw for spinbot)
@@ -36,6 +45,9 @@ local CONFIG = {
     TRIGGER_HOLD = 0.02,
 
     BHOP_REAPPLY_DELAY = 0.03,
+    MOUSE_SENSITIVITY = 0.003,
+    FIRST_PERSON_THRESHOLD = 3,
+    THIRD_PERSON_OFFSET = 8,
 }
 
 -- STATE
@@ -44,10 +56,15 @@ local STATE = {
     AIMBOT = true,
     FOV = true,
     SPINBOT = false,
+    thirdPerson = false,
     holdingRMB = false,
     jumping = false,
     typing = false,
     bhopStoredVelocity = nil,
+    isCustomCamera = false,
+    currentYaw = 0,
+    currentPitch = 0,
+    mouseConn = nil,
 }
 
 -- Performance reused objects
@@ -57,6 +74,102 @@ rayParams.FilterType = Enum.RaycastFilterType.Blacklist
 local nameTagMap = {}
 local lastTrigger = 0
 local spinYaw = 0 -- degrees
+
+-- Key System GUI
+local function createKeySystemGUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "KeySystemGui"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 300, 0, 150)
+    frame.Position = UDim2.new(0.5, -150, 0.5, -75)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.BackgroundTransparency = 1
+    title.Text = "Enter Key"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 20
+    title.Parent = frame
+
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.new(0.9, 0, 0, 30)
+    textBox.Position = UDim2.new(0.05, 0, 0.3, 0)
+    textBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textBox.PlaceholderText = "Enter your key here"
+    textBox.Text = ""
+    textBox.Font = Enum.Font.SourceSans
+    textBox.TextSize = 16
+    textBox.Parent = frame
+
+    local submitButton = Instance.new("TextButton")
+    submitButton.Size = UDim2.new(0.4, 0, 0, 30)
+    submitButton.Position = UDim2.new(0.3, 0, 0.6, 0)
+    submitButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+    submitButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    submitButton.Text = "Submit"
+    submitButton.Font = Enum.Font.SourceSansBold
+    submitButton.TextSize = 16
+    submitButton.Parent = frame
+
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(0.9, 0, 0, 20)
+    statusLabel.Position = UDim2.new(0.05, 0, 0.85, 0)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = ""
+    statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    statusLabel.Font = Enum.Font.SourceSans
+    statusLabel.TextSize = 14
+    statusLabel.Parent = frame
+
+    -- Corner rounding
+    local uiCorner = Instance.new("UICorner")
+    uiCorner.CornerRadius = UDim.new(0, 5)
+    uiCorner.Parent = frame
+    uiCorner:Clone().Parent = textBox
+    uiCorner:Clone().Parent = submitButton
+
+    -- Submit button functionality
+    submitButton.MouseButton1Click:Connect(function()
+        local enteredKey = textBox.Text
+        if enteredKey == KEY_SYSTEM.VALID_KEY then
+            KEY_SYSTEM.VALIDATED = true
+            statusLabel.Text = "Key Accepted! Script Unlocked."
+            statusLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+            task.wait(1)
+            screenGui:Destroy()
+            StarterGui:SetCore("SendNotification", {
+                Title = "Success",
+                Text = "Key system validated. Script is now active.",
+                Duration = 3,
+            })
+        else
+            statusLabel.Text = "Invalid Key!"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+            task.wait(1)
+            statusLabel.Text = ""
+        end
+    end)
+
+    return screenGui
+end
+
+-- Initialize Key System GUI and wait for validation
+if KEY_SYSTEM.GUI_ENABLED then
+    createKeySystemGUI()
+    while not KEY_SYSTEM.VALIDATED do
+        task.wait(0.1)
+    else
+        KEY_SYSTEM.VALIDATED = true
+    end
+end
 
 -- Drawing setup (minimal) - guard if Drawing not available (some environments)
 local DrawingLib = Drawing
@@ -68,7 +181,7 @@ if safeDrawing then
     FOVCircle = DrawingLib.new("Circle")
     FOVCircle.NumSides, FOVCircle.Thickness, FOVCircle.Filled = 100, 2, false
     FOVCircle.Radius, FOVCircle.Transparency = CONFIG.FOV_RADIUS, 0.6
-    FOVCircle.Visible = true
+    FOVCircle.Visible = STATE.FOV
 
     Tracer = DrawingLib.new("Line")
     Tracer.Visible = false
@@ -77,7 +190,7 @@ if safeDrawing then
     Watermark.Text = "made by nocturnumm on discord add me for a surprise :3"
     Watermark.Size = 18
     Watermark.Outline = true
-    Watermark.Visible = false
+    Watermark.Visible = true
 
     Keybinds = DrawingLib.new("Text")
     Keybinds.Size = 18
@@ -97,7 +210,11 @@ end
 local function isVisible(part)
     if not part or not part.Position then return false end
     -- blacklist local player's character so ray doesn't immediately hit own body
-    rayParams.FilterDescendantsInstances = { LocalPlayer.Character }
+    local filter = {}
+    if LocalPlayer.Character then
+        table.insert(filter, LocalPlayer.Character)
+    end
+    rayParams.FilterDescendantsInstances = filter
     local origin = Camera.CFrame.Position
     local dir = (part.Position - origin)
     if dir.Magnitude == 0 then return true end
@@ -151,7 +268,7 @@ local function getBestTarget(maxDist, fovDeg)
             end
         end
     end
-    return bestPart, bestPlayer
+    return bestPart, bestPlayer, bestScore
 end
 
 local function doTriggerFireAt(mousePos)
@@ -230,8 +347,8 @@ end)
 -- Keybind UI update
 local function updateKeybindText()
     if not safeDrawing or not Keybinds then return end
-    Keybinds.Text = string.format("[Keybinds]\nE - ESP: %s\nY - Aimbot: %s\nV - FOV: %s\\ - SPINBOT: %s",
-        STATE.ESP and "ON" or "OFF", STATE.AIMBOT and "ON" or "OFF", STATE.FOV and "ON" or "OFF", STATE.SPINBOT and "ON" or "OFF")
+    Keybinds.Text = string.format("[Keybinds]\nE - ESP: %s\nY - Aimbot: %s\nV - FOV: %s\nT - 3rd Person: %s\n\\ - SPINBOT: %s",
+        STATE.ESP and "ON" or "OFF", STATE.AIMBOT and "ON" or "OFF", STATE.FOV and "ON" or "OFF", STATE.thirdPerson and "ON" or "OFF", STATE.SPINBOT and "ON" or "OFF")
 end
 updateKeybindText()
 
@@ -273,7 +390,15 @@ end
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     local allowedForSpinToggle = (input.KeyCode == CONFIG.KEY_SPINBOT)
     -- if the game processed the input and it's not allowed for spin toggle, ignore
-    if gameProcessed and not allowedForSpinToggle then return end
+    if gameProcessed then
+        if input.UserInputType == Enum.UserInputType.MouseButton2 or
+           input.KeyCode == Enum.KeyCode.Space or
+           input.KeyCode == CONFIG.KEY_SPINBOT then
+            -- proceed
+        else
+            return
+        end
+    end
     if STATE.typing and not allowedForSpinToggle then return end
 
     if input.UserInputType == Enum.UserInputType.MouseButton2 then
@@ -291,6 +416,33 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         STATE.FOV = not STATE.FOV
         if safeDrawing and FOVCircle then FOVCircle.Visible = STATE.FOV end
         updateKeybindText()
+    elseif input.KeyCode == CONFIG.KEY_THIRDPERSON then
+        local char = LocalPlayer.Character
+        local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
+        STATE.thirdPerson = not STATE.thirdPerson
+        if STATE.thirdPerson then
+            Camera.CameraType = Enum.CameraType.Scriptable
+            local cf = Camera.CFrame
+            local look = cf.LookVector
+            STATE.currentPitch = math.deg(math.asin(-look.Y))
+            STATE.currentYaw = math.deg(math.atan2(look.X, look.Z))
+            if not STATE.mouseConn then
+                STATE.mouseConn = UserInputService.InputChanged:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.MouseMovement and (STATE.thirdPerson or STATE.isCustomCamera) then
+                        STATE.currentYaw = STATE.currentYaw + math.deg(input.Delta.X * CONFIG.MOUSE_SENSITIVITY)
+                        local deltaPitch = math.deg(input.Delta.Y * CONFIG.MOUSE_SENSITIVITY)
+                        STATE.currentPitch = math.clamp(STATE.currentPitch + deltaPitch, -80, 80)
+                    end
+                end)
+            end
+        else
+            if STATE.mouseConn and not STATE.isCustomCamera then
+                STATE.mouseConn:Disconnect()
+                STATE.mouseConn = nil
+            end
+            Camera.CameraType = Enum.CameraType.Custom
+        end
+        updateKeybindText()
     elseif input.KeyCode == CONFIG.KEY_SPINBOT then
         STATE.SPINBOT = not STATE.SPINBOT
         if STATE.SPINBOT then
@@ -299,8 +451,41 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             STATE.FOV = true
             if safeDrawing and FOVCircle then FOVCircle.Visible = true end
             spinYaw = 0
+            -- Check if in first person and setup custom camera
+            local char = LocalPlayer.Character
+            if char then
+                local head = char:FindFirstChild("Head")
+                if head then
+                    local dist = (Camera.CFrame.Position - head.Position).Magnitude
+                    if dist < CONFIG.FIRST_PERSON_THRESHOLD then
+                        STATE.isCustomCamera = true
+                        local look = Camera.CFrame.LookVector
+                        STATE.currentPitch = math.deg(math.asin(-look.Y))
+                        STATE.currentYaw = math.deg(math.atan2(look.X, look.Z))
+                        Camera.CameraType = Enum.CameraType.Scriptable
+                        if not STATE.mouseConn then
+                            STATE.mouseConn = UserInputService.InputChanged:Connect(function(input)
+                                if input.UserInputType == Enum.UserInputType.MouseMovement and STATE.isCustomCamera then
+                                    STATE.currentYaw = STATE.currentYaw + math.deg(input.Delta.X * CONFIG.MOUSE_SENSITIVITY)
+                                    local deltaPitch = math.deg(input.Delta.Y * CONFIG.MOUSE_SENSITIVITY)
+                                    STATE.currentPitch = math.clamp(STATE.currentPitch + deltaPitch, -89, 89)
+                                end
+                            end)
+                        end
+                    end
+                end
+            end
         else
             STATE.bhopStoredVelocity = nil
+            -- Disable custom camera if active
+            if STATE.isCustomCamera then
+                STATE.isCustomCamera = false
+                if STATE.mouseConn and not STATE.thirdPerson then
+                    STATE.mouseConn:Disconnect()
+                    STATE.mouseConn = nil
+                end
+                Camera.CameraType = Enum.CameraType.Custom
+            end
         end
         updateKeybindText()
     end
@@ -322,12 +507,26 @@ end)
 
 LocalPlayer.CharacterAdded:Connect(function(char)
     STATE.bhopStoredVelocity = nil
-    -- restore camera subject to humanoid on respawn if available
-    pcall(function()
-        Camera.CameraType = Enum.CameraType.Custom
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then Camera.CameraSubject = hum end
+    task.spawn(function()
+        local hum = char:WaitForChild("Humanoid", 5)
+        if hum then
+            -- restore camera subject to humanoid on respawn if available
+            pcall(function()
+                if not STATE.thirdPerson and not STATE.isCustomCamera then
+                    Camera.CameraType = Enum.CameraType.Custom
+                    Camera.CameraSubject = hum
+                end
+            end)
+        end
     end)
+    -- Reset custom camera state
+    if STATE.isCustomCamera and not STATE.SPINBOT then
+        STATE.isCustomCamera = false
+        if STATE.mouseConn then
+            STATE.mouseConn:Disconnect()
+            STATE.mouseConn = nil
+        end
+    end
 end)
 
 -- Main RenderStepped loop
@@ -337,90 +536,134 @@ renderConn = RunService.RenderStepped:Connect(function(dt)
     if not Camera then return end
     local vp = Camera.ViewportSize
     local mpos = UserInputService:GetMouseLocation()
-    if safeDrawing and FOVCircle then
-        FOVCircle.Position, FOVCircle.Radius = mpos, CONFIG.FOV_RADIUS
-        Watermark.Position = Vector2.new(vp.X - 420, vp.Y - 40)
-        Keybinds.Position = Vector2.new(20, 20)
-    end
-
-    -- nametag enabling
-    for pl, gui in pairs(nameTagMap) do
-        local char = pl.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local head = char and char:FindFirstChild("Head")
-        if gui and hum and head then
-            pcall(function()
-                gui.Enabled = STATE.ESP and hum.Health > 0 and not sameTeam(pl, LocalPlayer)
-            end)
+    if safeDrawing then
+        if FOVCircle then
+            FOVCircle.Position = mpos
+            FOVCircle.Radius = CONFIG.FOV_RADIUS
+            FOVCircle.Visible = STATE.FOV
+        end
+        if Watermark then
+            Watermark.Position = Vector2.new(vp.X - 420, vp.Y - 40)
+        end
+        if Keybinds then
+            Keybinds.Position = Vector2.new(20, 20)
         end
     end
 
-    -- Aimbot (camera smoothing)
-    if STATE.AIMBOT and STATE.holdingRMB then
-        local bestHead = nil
-        local bestDist = CONFIG.FOV_RADIUS
-        for _, pl in ipairs(Players:GetPlayers()) do
-            if pl ~= LocalPlayer and not sameTeam(pl, LocalPlayer) then
-                local char = pl.Character
-                local head = char and char:FindFirstChild("Head")
-                if head and not isKO(char) then
-                    local v2, onScreen = Camera:WorldToViewportPoint(head.Position)
-                    if onScreen and isVisible(head) then
-                        local dist = (Vector2.new(v2.X, v2.Y) - mpos).Magnitude
-                        if dist < bestDist then
-                            bestDist = dist
-                            bestHead = head
+    local char = LocalPlayer.Character
+    if char then
+        local head = char:FindFirstChild("Head")
+        local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+
+        -- Custom third person camera
+        if STATE.thirdPerson and hrp then
+            local yawRad = math.rad(STATE.currentYaw)
+            local pitchRad = math.rad(STATE.currentPitch)
+            local offsetCFrame = CFrame.Angles(0, yawRad, 0) * CFrame.new(0, 0, -CONFIG.THIRD_PERSON_OFFSET)
+            local camPos = hrp.Position + offsetCFrame.Position + Vector3.new(0, 2, 0)
+            local lookDir = (CFrame.Angles(pitchRad, yawRad, 0) * Vector3.new(0, 0, 1)).Unit
+            local lookAt = hrp.Position + lookDir * 10 + Vector3.new(0, 1, 0)
+            Camera.CFrame = CFrame.lookAt(camPos, lookAt)
+        end
+
+        -- Custom first person camera for spinbot
+        if STATE.isCustomCamera and head then
+            local yawRad = math.rad(STATE.currentYaw)
+            local pitchRad = math.rad(STATE.currentPitch)
+            local dirX = math.cos(yawRad) * math.cos(pitchRad)
+            local dirY = math.sin(pitchRad)
+            local dirZ = math.sin(yawRad) * math.cos(pitchRad)
+            local lookVector = Vector3.new(dirX, dirY, dirZ)
+            local camPos = head.Position + Vector3.new(0, 0.5, 0)
+            Camera.CFrame = CFrame.lookAt(camPos, camPos + lookVector)
+        end
+
+        -- nametag enabling
+        for pl, gui in pairs(nameTagMap) do
+            local tchar = pl.Character
+            local hum = tchar and tchar:FindFirstChildOfClass("Humanoid")
+            local thead = tchar and tchar:FindFirstChild("Head")
+            if gui and hum and thead then
+                pcall(function()
+                    gui.Enabled = STATE.ESP and hum.Health > 0 and not sameTeam(pl, LocalPlayer)
+                end)
+            end
+        end
+
+        -- Aimbot (camera smoothing)
+        if STATE.AIMBOT and STATE.holdingRMB then
+            local bestHead = nil
+            local bestDist = CONFIG.FOV_RADIUS
+            for _, pl in ipairs(Players:GetPlayers()) do
+                if pl ~= LocalPlayer and not sameTeam(pl, LocalPlayer) then
+                    local tchar = pl.Character
+                    local tHead = tchar and tchar:FindFirstChild("Head")
+                    if tHead and not isKO(tchar) then
+                        local v2, onScreen = Camera:WorldToViewportPoint(tHead.Position)
+                        if onScreen and isVisible(tHead) then
+                            local dist = (Vector2.new(v2.X, v2.Y) - mpos).Magnitude
+                            if dist < bestDist then
+                                bestDist = dist
+                                bestHead = tHead
+                            end
                         end
                     end
                 end
             end
-        end
-        if bestHead then
-            local camCF, dir = Camera.CFrame, (bestHead.Position - Camera.CFrame.Position).Unit
-            Camera.CFrame = camCF:Lerp(CFrame.new(camCF.Position, camCF.Position + dir), 1 / math.max(1, CONFIG.AIMBOT_SMOOTHNESS))
-            local pos, onScreen = Camera:WorldToViewportPoint(bestHead.Position)
-            if onScreen and Tracer then
-                Tracer.From, Tracer.To, Tracer.Visible = Vector2.new(vp.X/2, vp.Y/2), Vector2.new(pos.X, pos.Y), true
-            elseif Tracer then
-                Tracer.Visible = false
+            local alpha = 1 / math.max(1, CONFIG.AIMBOT_SMOOTHNESS)
+            if bestHead then
+                if STATE.isCustomCamera or STATE.thirdPerson then
+                    -- For custom cameras, lerp yaw/pitch
+                    local targetDir = (bestHead.Position - (head and head.Position or hrp.Position)).Unit
+                    local targetPitch = math.deg(math.asin(-targetDir.Y))
+                    local targetYaw = math.deg(math.atan2(targetDir.X, targetDir.Z))
+                    local yawDiff = ((targetYaw - STATE.currentYaw + 180) % 360) - 180
+                    STATE.currentPitch = STATE.currentPitch + (targetPitch - STATE.currentPitch) * alpha
+                    STATE.currentYaw = STATE.currentYaw + yawDiff * alpha
+                else
+                    -- Standard camera lerp
+                    local camCF = Camera.CFrame
+                    local dir = (bestHead.Position - camCF.Position).Unit
+                    Camera.CFrame = camCF:Lerp(CFrame.new(camCF.Position, camCF.Position + dir), alpha)
+                end
+                local pos, onScreen = Camera:WorldToViewportPoint(bestHead.Position)
+                if safeDrawing and Tracer and onScreen then
+                    Tracer.From = Vector2.new(vp.X/2, vp.Y/2)
+                    Tracer.To = Vector2.new(pos.X, pos.Y)
+                    Tracer.Visible = true
+                elseif safeDrawing and Tracer then
+                    Tracer.Visible = false
+                end
+            else
+                if safeDrawing and Tracer then Tracer.Visible = false end
             end
-        else
-            if Tracer then Tracer.Visible = false end
         end
-    end
 
-    -- Triggerbot (spinbot fast)
-    if STATE.SPINBOT then
-        local now = tick()
-        if now - lastTrigger >= CONFIG.TRIGGER_RATE then
-            lastTrigger = now
-            local targetPart, targetPlayer = getBestTarget(CONFIG.TRIGGER_MAX_DIST, CONFIG.TRIGGER_FOV)
-            if targetPart and targetPlayer then
-                if CONFIG.WALLBANG_CLIENT or isVisible(targetPart) then
-                    doTriggerFireAt(UserInputService:GetMouseLocation())
+        -- Triggerbot (spinbot fast)
+        if STATE.SPINBOT then
+            local now = tick()
+            if now - lastTrigger >= CONFIG.TRIGGER_RATE then
+                lastTrigger = now
+                local targetPart, _ = getBestTarget(CONFIG.TRIGGER_MAX_DIST, CONFIG.TRIGGER_FOV)
+                if targetPart then
+                    if CONFIG.WALLBANG_CLIENT or isVisible(targetPart) then
+                        doTriggerFireAt(UserInputService:GetMouseLocation())
+                    end
                 end
             end
         end
-    end
 
-    -- SPINBOT (character spin visible to others) - rotate HRP yaw rapidly
-    if STATE.SPINBOT then
-        local char = LocalPlayer.Character
-        local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
-        if hrp and hrp.Parent then
+        -- SPINBOT (character spin visible to others) - rotate HRP yaw rapidly
+        if STATE.SPINBOT and hrp then
             spinYaw = (spinYaw + CONFIG.SPINBOT_SPIN_SPEED * dt) % 360
             local pos = hrp.Position
             local vel = hrp.Velocity
             hrp.CFrame = CFrame.new(pos) * CFrame.Angles(0, math.rad(spinYaw), 0)
             hrp.Velocity = vel
         end
-    end
 
-    -- Bhop
-    local char = LocalPlayer.Character
-    if char then
+        -- Bhop
         local hum = char:FindFirstChildOfClass("Humanoid")
-        local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
         if hum and hrp then
             handleBhop(hum, hrp, STATE.jumping and not STATE.typing)
         end
@@ -447,6 +690,10 @@ local function cleanup()
         pcall(function() gui:Destroy() end)
         nameTagMap[pl] = nil
     end
+    -- Disconnect mouse conn if exists
+    if STATE.mouseConn then
+        STATE.mouseConn:Disconnect()
+    end
 end
 
 -- restore on character removal (ensure camera restored)
@@ -457,4 +704,15 @@ LocalPlayer.CharacterRemoving:Connect(function()
         UserInputService.MouseIconEnabled = true
         if Camera then Camera.CameraType = Enum.CameraType.Custom end
     end)
+    -- Reset custom camera
+    if STATE.isCustomCamera then
+        STATE.isCustomCamera = false
+        if STATE.mouseConn then
+            STATE.mouseConn:Disconnect()
+            STATE.mouseConn = nil
+        end
+    end
+    if STATE.thirdPerson then
+        STATE.thirdPerson = false
+    end
 end)
