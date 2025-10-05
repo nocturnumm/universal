@@ -22,8 +22,8 @@ end
 
 -- Key System Configuration
 local KEY_SYSTEM = {
-    VALID_KEY = "BetaAccess", -- Replace with your desired key
-    GUI_ENABLED = true,
+    VALID_KEY = "BetaAccess",
+    GUI_ENABLED = true,    
     VALIDATED = false,
 }
 
